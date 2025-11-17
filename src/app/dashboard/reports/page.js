@@ -1,21 +1,21 @@
-// src/app/dashboard/reports/page.js
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { db } from '../../../lib/firebase';
 import { collection, getDocs, query, where } from 'firebase/firestore';
-import * as XLSX from 'xlsx'; // Importar la librería xlsx
+import * as XLSX from 'xlsx';
+import VoiceCommander from '../../../components/VoiceCommander';
 
 export default function ReportsPage() {
   const [loading, setLoading] = useState(false);
-  const [searchId, setSearchId] = useState(''); // Para buscar cliente por ID
+  const [searchId, setSearchId] = useState('');
 
   // Función genérica para exportar datos a Excel
   const exportToExcel = (data, fileName) => {
-    const ws = XLSX.utils.json_to_sheet(data); // Convierte un array de objetos JSON a una hoja
-    const wb = XLSX.utils.book_new(); // Crea un nuevo libro de trabajo
-    XLSX.utils.book_append_sheet(wb, ws, "Reporte"); // Añade la hoja al libro
-    XLSX.writeFile(wb, `${fileName}.xlsx`); // Escribe y descarga el archivo
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Reporte");
+    XLSX.writeFile(wb, `${fileName}.xlsx`);
   };
 
   // --- REPORTE 1: Valor total de ventas realizadas ---
@@ -25,7 +25,7 @@ export default function ReportsPage() {
       const salesSnapshot = await getDocs(collection(db, "sales"));
       let totalSalesValue = 0;
       const salesDataForReport = [];
-      
+
       salesSnapshot.forEach(doc => {
         const sale = doc.data();
         totalSalesValue += sale.total;
@@ -38,8 +38,7 @@ export default function ReportsPage() {
         });
       });
 
-      // Añadimos una fila final con el total
-      salesDataForReport.push({}); // Fila vacía para separar
+      salesDataForReport.push({});
       salesDataForReport.push({ Cliente: "VALOR TOTAL DE VENTAS", Total: totalSalesValue });
 
       exportToExcel(salesDataForReport, "reporte_valor_total_ventas");
@@ -58,7 +57,7 @@ export default function ReportsPage() {
       const productsSnapshot = await getDocs(collection(db, "products"));
       const stockData = [];
       let totalItems = 0;
-      
+
       productsSnapshot.forEach(doc => {
         const product = doc.data();
         stockData.push({
@@ -90,7 +89,6 @@ export default function ReportsPage() {
     }
     setLoading(true);
     try {
-      // Creamos una consulta que busca en la colección 'sales' donde el campo 'customer.id' o 'customer.name' coincida
       const q = query(collection(db, "sales"), where("customer.id", "==", searchId));
       const salesSnapshot = await getDocs(q);
 
@@ -106,7 +104,7 @@ export default function ReportsPage() {
 
       salesSnapshot.forEach(doc => {
         const sale = doc.data();
-        customerName = sale.customer.name; // Guardamos el nombre para el título
+        customerName = sale.customer.name;
         customerSalesData.push({
           ID_Venta: doc.id,
           Fecha: sale.date.toDate().toLocaleDateString(),
@@ -117,7 +115,7 @@ export default function ReportsPage() {
 
       customerSalesData.push({});
       customerSalesData.push({ Fecha: "TOTAL GASTADO POR EL CLIENTE", Total_Venta: totalSpent });
-      
+
       exportToExcel(customerSalesData, `reporte_compras_${customerName.replace(/\s/g, '_')}`);
 
     } catch (err) {
@@ -127,11 +125,25 @@ export default function ReportsPage() {
     setLoading(false);
   };
 
+  // --- NUEVO: Función que recibe e interpreta el comando de voz ---
+  const handleVoiceCommand = useCallback((command) => {
+    console.log("Interpretando comando:", command);
+    if (command.includes('venta') || command.includes('ventas')) {
+      alert("Comando de voz reconocido: generando reporte de ventas.");
+      generateSalesValueReport();
+    } else if (command.includes('stock') || command.includes('inventario')) {
+      alert("Comando de voz reconocido: generando reporte de stock.");
+      generateStockReport();
+    } else {
+      alert(`Comando no reconocido: "${command}"`);
+    }
+  }, []);
+
   return (
     <div>
       <h1 className="text-3xl font-bold mb-8">Generación de Reportes</h1>
       <div className="space-y-8">
-        
+
         {/* Card para Reporte 1 */}
         <div className="bg-white p-6 rounded-lg shadow-md">
           <h2 className="text-xl font-semibold mb-4">1. Valor Total de Ventas</h2>
@@ -169,6 +181,9 @@ export default function ReportsPage() {
         </div>
 
       </div>
+
+      {/* Componente de comandos de voz */}
+      <VoiceCommander onCommand={handleVoiceCommand} />
     </div>
   );
 }
