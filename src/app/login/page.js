@@ -1,12 +1,13 @@
-// src/app/login/page.js — VERSIÓN FINAL CON FACE LOGIN Y TOKEN
+// src/app/login/page.js — VERSIÓN FINAL CON SELECCIÓN DE CUENTA + FACE LOGIN + TOKEN
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { signInWithEmailAndPassword, signInWithCustomToken } from "firebase/auth"; // <-- Nueva importación
+import { signInWithEmailAndPassword, signInWithCustomToken } from "firebase/auth";
 import { auth, db } from "../../lib/firebase";
 import { collection, getDocs } from "firebase/firestore";
+import AccountSelectorModal from "../../components/AccountSelectorModal";
 
 /* ----------------------------------------------
    CARGA DE MODELOS FACEAPI
@@ -14,13 +15,9 @@ import { collection, getDocs } from "firebase/firestore";
 const loadFaceApiModels = async () => {
   const MODEL_URL = "/models";
 
-  if (!window.faceapi) {
-    console.log("FaceAPI aún no está disponible, reintentando...");
-    return false;
-  }
+  if (!window.faceapi) return false;
 
   try {
-    console.log("Cargando modelos...");
     await Promise.all([
       window.faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
       window.faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
@@ -28,7 +25,6 @@ const loadFaceApiModels = async () => {
       window.faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
     ]);
 
-    console.log("Modelos cargados correctamente.");
     return true;
   } catch (err) {
     console.error("Error cargando modelos:", err);
@@ -40,13 +36,16 @@ export default function LoginPage() {
   const router = useRouter();
 
   /* ----------------------------------------------
-     ESTADOS
+     ESTADOS NORMALES
   ------------------------------------------------*/
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
+  /* ----------------------------------------------
+     ESTADOS FACE ID
+  ------------------------------------------------*/
   const videoRef = useRef(null);
   const modelsLoaded = useRef(false);
   const [loadingMessage, setLoadingMessage] = useState("Cargando servicios de IA...");
@@ -54,8 +53,11 @@ export default function LoginPage() {
   const [faceIdMessage, setFaceIdMessage] = useState("");
   const [isFaceLoggingIn, setIsFaceLoggingIn] = useState(false);
 
+  /* NUEVO ESTADO — cuentas coincidentes */
+  const [matchingAccounts, setMatchingAccounts] = useState([]);
+
   /* ----------------------------------------------
-     CARGAR MODELOS AUTOMÁTICAMENTE
+     CARGA DE MODELOS
   ------------------------------------------------*/
   useEffect(() => {
     const load = async () => {
@@ -97,12 +99,13 @@ export default function LoginPage() {
       alert("Los servicios de IA aún se están cargando.");
       return;
     }
+
     setFaceIdMessage("Iniciando cámara...");
     setIsCameraOn(true);
   };
 
   /* ----------------------------------------------
-     ACTIVAR / DESACTIVAR CÁMARA
+     ACTIVAR / DESACTIVAR CAMARA
   ------------------------------------------------*/
   useEffect(() => {
     const activateCamera = async () => {
@@ -122,101 +125,101 @@ export default function LoginPage() {
       if (videoRef.current?.srcObject) {
         const tracks = videoRef.current.srcObject.getTracks();
         tracks.forEach((t) => t.stop());
-        videoRef.current.srcObject = null;
       }
-      if (videoRef.current?.intervalId) {
-        clearInterval(videoRef.current.intervalId);
-      }
+      if (videoRef.current?.intervalId) clearInterval(videoRef.current.intervalId);
     };
   }, [isCameraOn]);
 
-  const stopCamera = () => {
+  /* ----------------------------------------------
+     stopCamera — ahora con useCallback
+  ------------------------------------------------*/
+  const stopCamera = useCallback(() => {
     setIsCameraOn(false);
     setFaceIdMessage("");
     setIsFaceLoggingIn(false);
-  };
+  }, []);
 
   /* ----------------------------------------------
-     LOGIN POR FACE ID CON CUSTOM TOKEN
+     NUEVA FUNCIÓN — handleAccountSelection
+     ahora con useCallback
   ------------------------------------------------*/
-  const handleFaceLogin = useCallback(async () => {
-    if (!videoRef.current || !modelsLoaded.current || isFaceLoggingIn) return;
-
-    console.log("Detectando rostro...");
-    setIsFaceLoggingIn(true);
-    setFaceIdMessage("Buscando rostro...");
+  const handleAccountSelection = useCallback(async (selectedEmail) => {
+    setMatchingAccounts([]);
+    setFaceIdMessage(`Autenticando como ${selectedEmail}...`);
 
     try {
-      const snapshot = await getDocs(collection(db, "users"));
-      const labeledDescriptors = snapshot.docs.map((doc) => {
-        const data = doc.data();
-        return new window.faceapi.LabeledFaceDescriptors(
-          data.email,
-          [new Float32Array(data.faceDescriptor)]
-        );
+      const response = await fetch("/api/create-custom-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: selectedEmail }),
       });
 
-      if (!labeledDescriptors.length) {
-        setFaceIdMessage("No hay rostros registrados.");
-        setTimeout(stopCamera, 2000);
-        return;
-      }
+      const { token, error } = await response.json();
+      if (error) throw new Error(error);
 
-      const faceMatcher = new window.faceapi.FaceMatcher(labeledDescriptors, 0.5);
-
-      const intervalId = setInterval(async () => {
-        if (!videoRef.current) return;
-
-        const detection = await window.faceapi
-          .detectSingleFace(videoRef.current, new window.faceapi.TinyFaceDetectorOptions())
-          .withFaceLandmarks()
-          .withFaceDescriptor();
-
-        if (detection) {
-          const match = faceMatcher.findBestMatch(detection.descriptor);
-
-          if (match.label !== "unknown") {
-            // ¡Coincidencia encontrada!
-            clearInterval(intervalId); // Detenemos la detección
-            setFaceIdMessage(`Bienvenido, ${match.label}. Autenticando...`);
-
-            try {
-              // ===== INICIO DE LA NUEVA LÓGICA DE AUTENTICACIÓN =====
-              const response = await fetch('/api/create-custom-token', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: match.label }),
-              });
-
-              const { token, error } = await response.json();
-
-              if (error) throw new Error(error);
-
-              await signInWithCustomToken(auth, token);
-              stopCamera();
-              router.push('/dashboard');
-              // ===== FIN DE LA NUEVA LÓGICA DE AUTENTICACIÓN =====
-
-            } catch (authError) {
-              console.error("Error en la autenticación con token:", authError);
-              setFaceIdMessage("Error de autenticación. Intenta con tu contraseña.");
-              setTimeout(stopCamera, 3000);
-            }
-
-          } else {
-            setFaceIdMessage("Rostro detectado, no reconocido.");
-          }
-        }
-      }, 900);
-
-      if (videoRef.current) videoRef.current.intervalId = intervalId;
-
-    } catch (err) {
-      console.error("Error en login por Face ID:", err);
-      setFaceIdMessage("Ocurrió un error al intentar iniciar sesión.");
-      setIsFaceLoggingIn(false);
+      await signInWithCustomToken(auth, token);
+      stopCamera();
+      router.push("/dashboard");
+    } catch (authError) {
+      console.error("Error en autenticación:", authError);
+      setFaceIdMessage("Error de autenticación. Intenta con tu contraseña.");
+      setTimeout(stopCamera, 3000);
     }
-  }, [isFaceLoggingIn, router]);
+  }, [router, stopCamera]);
+
+  /* ----------------------------------------------
+     NUEVO handleFaceLogin (COMPLETO)
+  ------------------------------------------------*/
+  const handleFaceLogin = useCallback(async () => {
+    if (!videoRef.current || !modelsLoaded.current) return;
+
+    setFaceIdMessage("Buscando rostro...");
+    const intervalId = setInterval(async () => {
+      if (!videoRef.current) return;
+
+      const detection = await window.faceapi
+        .detectSingleFace(videoRef.current)
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+
+      if (!detection) return;
+
+      clearInterval(intervalId);
+      setFaceIdMessage("Rostro detectado. Verificando...");
+
+      const snapshot = await getDocs(collection(db, "users"));
+
+      // NUEVA LÓGICA — encontrar TODOS los usuarios dentro del umbral
+      const matches = [];
+
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        if (!data.faceDescriptor) return;
+
+        const distance = window.faceapi.euclideanDistance(
+          detection.descriptor,
+          new Float32Array(data.faceDescriptor)
+        );
+
+        if (distance < 0.5) {
+          matches.push(data.email);
+        }
+      });
+
+      const uniqueAccounts = [...new Set(matches)];
+
+      if (uniqueAccounts.length === 1) {
+        handleAccountSelection(uniqueAccounts[0]);
+      } else if (uniqueAccounts.length > 1) {
+        setMatchingAccounts(uniqueAccounts);
+      } else {
+        setFaceIdMessage("Rostro no reconocido.");
+        setTimeout(stopCamera, 2000);
+      }
+    }, 900);
+
+    videoRef.current.intervalId = intervalId;
+  }, [handleAccountSelection, stopCamera]);
 
   /* ----------------------------------------------
      EVENTO PLAY DEL VIDEO
@@ -237,80 +240,102 @@ export default function LoginPage() {
      UI
   ------------------------------------------------*/
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gray-100">
-      <div className="w-full max-w-md p-8 bg-white rounded-lg shadow">
+    <>
+      <div className="flex items-center justify-center min-h-screen bg-gray-100">
+        <div className="w-full max-w-md p-8 bg-white rounded-lg shadow">
 
-        {isCameraOn ? (
-          <div className="text-center">
-            <div className="bg-gray-800 aspect-square rounded overflow-hidden">
-              <video
-                ref={videoRef}
-                autoPlay
-                muted
-                playsInline
-                className="w-full"
-                style={{ transform: "scaleX(-1)" }}
-              />
+          {isCameraOn ? (
+            <div className="text-center">
+              <div className="bg-gray-800 aspect-square rounded overflow-hidden">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="w-full"
+                  style={{ transform: "scaleX(-1)" }}
+                />
+              </div>
+
+              <p className="mt-2 h-6">{faceIdMessage}</p>
+
+              <button onClick={stopCamera} className="text-red-500 mt-2">
+                Cancelar
+              </button>
             </div>
-            <p className="mt-2 h-6">{faceIdMessage}</p>
-            <button onClick={stopCamera} className="text-red-500 mt-2">
-              Cancelar
-            </button>
-          </div>
-        ) : (
-          <>
-            <h1 className="text-2xl font-bold text-center mb-4">Iniciar Sesión</h1>
+          ) : (
+            <>
+              <h1 className="text-2xl font-bold text-center mb-4">Iniciar Sesión</h1>
 
-            {error && (
-              <p className="text-center text-sm text-red-500 bg-red-100 p-2 rounded">
-                {error}
+              {error && (
+                <p className="text-center text-sm text-red-500 bg-red-100 p-2 rounded">
+                  {error}
+                </p>
+              )}
+
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div>
+                  <label>Correo electrónico</label>
+                  <input
+                    type="email"
+                    required
+                    className="w-full border px-3 py-2 rounded"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label>Contraseña</label>
+                  <input
+                    type="password"
+                    required
+                    className="w-full border px-3 py-2 rounded"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+
+                <button className="w-full bg-indigo-600 text-white py-2 rounded">
+                  {loading ? "Ingresando..." : "Ingresar"}
+                </button>
+              </form>
+
+              <div className="text-center mt-4">
+                <button
+                  onClick={startCamera}
+                  disabled={!!loadingMessage}
+                  className="w-full bg-gray-800 text-white py-2 rounded disabled:bg-gray-400"
+                >
+                  {loadingMessage || "Ingresar con Face ID"}
+                </button>
+              </div>
+
+              <div className="text-sm text-center mt-4">
+                <Link href="/forgot-password" className="font-medium text-indigo-600 hover:text-indigo-500">
+                  ¿Olvidaste tu contraseña?
+                </Link>
+              </div>
+
+              <p className="text-sm text-center mt-4">
+                <Link href="/register" className="text-indigo-600">
+                  Registrarse
+                </Link>
               </p>
-            )}
-
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label>Correo electrónico</label>
-                <input
-                  type="email"
-                  required
-                  className="w-full border px-3 py-2 rounded"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </div>
-
-              <div>
-                <label>Contraseña</label>
-                <input
-                  type="password"
-                  required
-                  className="w-full border px-3 py-2 rounded"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </div>
-
-              <button className="w-full bg-indigo-600 text-white py-2 rounded">
-                {loading ? "Ingresando..." : "Ingresar"}
-              </button>
-            </form>
-
-            <div className="text-center mt-4">
-              <button
-                onClick={startCamera}
-                disabled={!!loadingMessage}
-                className="w-full bg-gray-800 text-white py-2 rounded disabled:bg-gray-400"
-              >
-                {loadingMessage || "Ingresar con Face ID"}
-              </button>
-            </div>
-
-            <p className="text-sm text-center mt-4">
-              <Link href="/register" className="text-indigo-600">Registrarse</Link>
-            </p>
-          </>
-        )}
+            </>
+          )}
+        </div>
       </div>
-    </div>
+
+      {/* ---------------- MODAL DE SELECCIÓN DE CUENTA ---------------- */}
+      <AccountSelectorModal
+        accounts={matchingAccounts}
+        onSelect={handleAccountSelection}
+        onClose={() => {
+          setMatchingAccounts([]);
+          stopCamera();
+        }}
+      />
+    </>
   );
 }

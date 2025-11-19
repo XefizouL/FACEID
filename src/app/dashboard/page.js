@@ -28,9 +28,16 @@ export default function InventoryPage() {
     <>
       <h1 className="text-3xl font-bold mb-8">Gestión de Inventario</h1>
       <div className="flex flex-col items-center">
+
+        {/* Formulario para añadir productos */}
         <AddProductForm />
+
+        {/* Separador */}
         <div className="w-full max-w-6xl border-t my-12"></div>
+
+        {/* Lista de productos */}
         <ProductList />
+
       </div>
     </>
   );

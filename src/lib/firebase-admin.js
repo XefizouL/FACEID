@@ -1,41 +1,30 @@
-// src/lib/firebase-admin.js (VERSIÓN FINAL Y CORREGIDA)
+// src/lib/firebase-admin.js 
 import admin from 'firebase-admin';
-
-// --- TAREA: Abre tu archivo 'serviceAccountKey.json' y copia/pega los valores aquí ---
-const serviceAccount = {
-  "type": "service_account",
-  "project_id": "faceid-c3cb4",
-  "private_key_id": "TU_PRIVATE_KEY_ID_DE_TU_JSON", 
-  "private_key": "-----BEGIN PRIVATE KEY-----\n...TODA_TU_CLAVE_PRIVADA_DE_TU_JSON...\n-----END PRIVATE KEY-----\n",
-  "client_email": "firebase-adminsdk-fbsvc@faceid-c3cb4.iam.gserviceaccount.com", 
-  "client_id": "TU_CLIENT_ID_DE_TU_JSON",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "TU_CERT_URL_DE_TU_JSON"
-};
-
-const BUCKET_NAME = "faceid-c3cb4.firebasestorage.app"; // Verifica que este sea tu bucket name
-// ----------------------------------------------------------------------------------
-
 
 if (!admin.apps.length) {
   try {
+    const serviceAccountBase64 = process.env.FIREBASE_ADMIN_CREDENTIALS_BASE64;
+    const bucketName = process.env.FIREBASE_STORAGE_BUCKET;
+
+    if (!serviceAccountBase64 || !bucketName) {
+      throw new Error("Las variables de entorno de Firebase Admin no están definidas.");
+    }
+
+    const serviceAccountJson = Buffer.from(serviceAccountBase64, 'base64').toString('utf-8');
+    const serviceAccount = JSON.parse(serviceAccountJson);
+
     admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
-      // Ya no pasamos el bucket name aquí
+      credential: admin.credential.cert(serviceAccount),
+      storageBucket: bucketName,
     });
     console.log("✅ Firebase Admin SDK inicializado.");
   } catch (error) {
-    console.error("❌ ERROR FATAL al inicializar Firebase Admin:", error.message);
+    console.error("❌ ERROR FATAL al inicializar Firebase Admin SDK:", error.message);
   }
 }
 
-const adminDb = admin.firestore();
+const getAdminDb = () => admin.firestore();
+const getAdminStorage = () => admin.storage().bucket();
 
-// --- ¡LA CORRECCIÓN MÁS IMPORTANTE ESTÁ AQUÍ! ---
-// Le pasamos el BUCKET_NAME directamente a la función bucket()
-const adminStorage = admin.storage().bucket(BUCKET_NAME);
-// --------------------------------------------
-
-export { adminDb, adminStorage };
+export const adminDb = getAdminDb();
+export const adminStorage = getAdminStorage();
